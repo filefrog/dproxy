@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+my $TLS_CERT = $ENV{'TLS_CERT'} || '/etc/nginx/tls/wildcard.crt';
+my $TLS_KEY  = $ENV{'TLS_KEY'}  || '/etc/nginx/tls/wildcard.key';
+
+my $NGINX_CONFD = $ENV{'NGINX_CONFD'} || '/etc/nginx/conf.d';
+my $STATE_DIR   = $ENV{'STATE_DIR'}   || '/var/run/dproxy';
+
+`mkdir -p $NGINX_CONFD $STATE_DIR`;
+
+open my $nginx_conf, ">", "$NGINX_CONFD/routes.conf.new"
+	or die "unable to open $NGINX_CONFD/routes.conf.new for writing: $!\n";
+
+open my $control, ">", "$STATE_DIR/control"
+	or die "unable to open $STATE_DIR/control for writing: $!\n";
+
+while (<STDIN>) {
+	chomp;
+	my ($id, $route, $port) = map { dequote($_) } split /,/;
+	print $control "$route:$port\n";
+	print $nginx_conf <<EOF;
+server {
+  listen 443 ssl;
+  server_name $route;
+
+  ssl_certificate     $TLS_CERT;
+  ssl_certificate_key $TLS_KEY;
+  include             /etc/nginx/tls.defaults;
+
+  location / {
+    proxy_pass http://127.0.0.1:$port;
+    include    /etc/nginx/proxy.defaults;
+  }
+}
+EOF
+}
+
+my $old_sha1 = '';
+my $new_sha1 = `/usr/bin/sha1sum <$STATE_DIR/control`;
+   $old_sha1 = `/usr/bin/sha1sum <$STATE_DIR/last.control` if -f "$STATE_DIR/last.control";
+
+if ($new_sha1 eq $old_sha1) {
+	print "no changes detected.\n";
+	unlink("$NGINX_CONFD/routes.conf.new");
+	unlink("$STATE_DIR/control");
+
+} else {
+	print "updating nginx...\n";
+	rename("$STATE_DIR/control",
+	       "$STATE_DIR/last.control");
+	rename("$NGINX_CONFD/routes.conf.new",
+	       "$NGINX_CONFD/routes.conf");
+	`reload-nginx`;
+}
+exit 0;
+
+sub slurp {
+	my ($filename) = @_;
+	open my $fh, "<", $filename
+		or return "";
+	my $s = do { local $/; <$fh> };
+	close $fh;
+	return $s;
+}
+
+sub dequote {
+	my ($s) = @_;
+	$s =~ s/(^"|"$)//g;
+	return $s;
+}

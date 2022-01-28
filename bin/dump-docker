@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+for id in $(docker ps --format '{{.ID}}')
+do
+	docker inspect $id | \
+	  jq -r '.[] | {
+	                 id:    .Id,
+	                 route: .Config.Labels["com.huntprod.docker.route"],
+	                 port:  .Config.Labels["com.huntprod.docker.port"]
+	               }'
+done | jq -rs '.[] | select(.route) | [.id, .route, .port] | @csv'

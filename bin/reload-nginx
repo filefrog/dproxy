@@ -1,0 +1,12 @@
+#!/bin/bash
+set -eu
+
+for proc in /proc/*/cmdline
+do
+	if grep -aq 'nginx: master' $proc
+	then
+		kill -HUP $(echo $proc | sed -e 's|/cmdline$||;s|^/proc/||')
+		exit 0
+	fi
+done
+exit 1

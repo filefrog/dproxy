@@ -1,0 +1,6 @@
+#!/bin/sh
+exec docker run --rm -it \
+  -p 3090:80 \
+  --label com.huntprod.docker.route=aux.huntprod.com \
+  --label com.huntprod.docker.port=3090 \
+  nginx

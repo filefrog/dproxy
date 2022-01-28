@@ -1,0 +1,7 @@
+#!/bin/sh
+exec docker run --rm -it \
+  -v $PWD/cert.pem:/etc/nginx/tls/wildcard.crt:ro \
+  -v  $PWD/key.pem:/etc/nginx/tls/wildcard.key:ro \
+  --network host \
+  --name dproxy \
+  foo

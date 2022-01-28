@@ -1,0 +1,15 @@
+#!/bin/bash
+
+CERTS=$(mktemp -d selfc.XXXXXXX)
+trap "rm -rf $CERTS" EXIT TERM INT
+
+openssl req \
+  -newkey rsa:2048 -nodes -sha256 -keyout $CERTS/key.pem \
+  -subj '/o=Hunt Productions, Inc.' \
+  -addext "subjectAltName = DNS:*.huntprod.com" \
+  -x509 -days 3650 -out $CERTS/cert.pem
+
+cat $CERTS/key.pem
+echo
+cat $CERTS/cert.pem
+echo
