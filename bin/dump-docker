@@ -1,11 +1,34 @@
 #!/bin/sh
 set -eu
-for id in $(docker ps --format '{{.ID}}')
+auto_label=${DPROXY_AUTO_LABEL:-com.huntprod.docker.auto}
+for id in $(docker ps --filter label=${auto_label} --format '{{.ID}}')
 do
 	docker inspect $id | \
 	  jq -r '.[] | {
-	                 id:    .Id,
-	                 route: .Config.Labels["com.huntprod.docker.route"],
-	                 port:  .Config.Labels["com.huntprod.docker.port"]
-	               }'
-done | jq -rs '.[] | select(.route) | [.id, .route, .port] | @csv'
+ id: .Id,
+ endpoint: (.NetworkSettings.Ports
+            | values[][0]
+            | .HostIp
+            + ":"
+            + .HostPort),
+
+ route: ((.Name
+          | sub("/";"")
+          | sub("_";"-"))
+         +"-"
+         +(.Id
+           | sub(".{58}$";"")
+           + env.DPROXY_TLD))
+}'
+done | jq -rs '.[] | [.id, .route, .endpoint] | @csv'
+
+manual_label=com.huntprod.docker
+for id in $(docker ps --filter label=${manual_label}.route --format '{{.ID}}')
+do
+	docker inspect $id | \
+	  jq -r '.[] | {
+  id:    .Id,
+  route: .Config.Labels["'"${manual_label}.route"'"],
+  port:  .Config.Labels["'"${manual_label}.port"'"]
+}'
+done | jq -rs '.[] | [.id, .route, "127.0.0.1:"+.port] | @csv'

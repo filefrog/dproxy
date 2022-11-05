@@ -18,8 +18,8 @@ open my $control, ">", "$STATE_DIR/control"
 
 while (<STDIN>) {
 	chomp;
-	my ($id, $route, $port) = map { dequote($_) } split /,/;
-	print $control "$route:$port\n";
+	my ($id, $route, $endpoint) = map { dequote($_) } split /,/;
+	print $control "$route -> $endpoint\n";
 	print $nginx_conf <<EOF;
 server {
   listen 443 ssl;
@@ -30,7 +30,7 @@ server {
   include             /etc/nginx/tls.defaults;
 
   location / {
-    proxy_pass http://127.0.0.1:$port;
+    proxy_pass http://$endpoint;
     include    /etc/nginx/proxy.defaults;
   }
 }
