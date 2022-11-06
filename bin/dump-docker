@@ -8,6 +8,7 @@ do
  id: .Id,
  endpoint: (.NetworkSettings.Ports
             | values[][0]
+            | select(.HostIp and .HostPort)
             | .HostIp
             + ":"
             + .HostPort),
