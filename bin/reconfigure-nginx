@@ -37,6 +37,15 @@ server {
 EOF
 }
 
+print $nginx_conf <<EOF;
+server {
+  listen 80;
+  server_name _;
+
+  return 301 https://\$host/\$request_uri;
+}
+EOF
+
 my $old_sha1 = '';
 my $new_sha1 = `/usr/bin/sha1sum <$STATE_DIR/control`;
    $old_sha1 = `/usr/bin/sha1sum <$STATE_DIR/last.control` if -f "$STATE_DIR/last.control";
