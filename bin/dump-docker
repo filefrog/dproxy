@@ -30,6 +30,7 @@ do
 	  jq -r '.[] | {
   id:    .Id,
   route: .Config.Labels["'"${manual_label}.route"'"],
+  host: (.Config.Labels["'"${manual_label}.host"'"] // "127.0.0.1"),
   port:  .Config.Labels["'"${manual_label}.port"'"]
 }'
-done | jq -rs '.[] | [.id, .route, "127.0.0.1:"+.port] | @csv'
+done | jq -rs '.[] | [.id, .route, .host+":"+.port] | @csv'
