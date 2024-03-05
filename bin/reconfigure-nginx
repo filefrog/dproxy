@@ -19,8 +19,22 @@ open my $control, ">", "$STATE_DIR/control"
 while (<STDIN>) {
 	chomp;
 	my ($id, $route, $endpoint) = map { dequote($_) } split /,/;
-	print $control "$route -> $endpoint\n";
-	print $nginx_conf <<EOF;
+	my @routes = ($route);
+	my @endpoints = ($endpoint);
+	if ($route =~ m/\+/) {
+		(my $prefix = $endpoint) =~ s/:.*//;
+		$endpoint =~ s/.*://;
+		@routes = split /\+/, $route;
+		@endpoints = map { "$prefix:$_" } split /\+/, $endpoint;
+	}
+	if (@routes != @endpoints) {
+		die "mismatched number of routes/ and ports (".scalar(@routes)." routes for ".scalar(@endpoints)." ports)\n";
+	}
+	for (my $i = 0; $i < @routes; $i++) {
+		$route = $routes[$i];
+		$endpoint = $endpoints[$i];
+		print $control "$route -> $endpoint\n";
+		print $nginx_conf <<EOF;
 server {
   listen 443 ssl;
   server_name $route;
@@ -35,6 +49,7 @@ server {
   }
 }
 EOF
+	}
 }
 
 print $nginx_conf <<EOF;
