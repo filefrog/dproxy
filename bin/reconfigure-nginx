@@ -76,7 +76,11 @@ if ($new_sha1 eq $old_sha1) {
 	       "$STATE_DIR/last.control");
 	rename("$NGINX_CONFD/routes.conf.new",
 	       "$NGINX_CONFD/routes.conf");
-	`reload-nginx`;
+	if ($ENV{SKIP_RELOAD} && $ENV{SKIP_RELOAD} eq 'yes') {
+		print "skipping reload of nginx (SKIP_RELOAD=yes)\n";
+	} else {
+		`reload-nginx`;
+	}
 }
 exit 0;
 
