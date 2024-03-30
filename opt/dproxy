@@ -1,0 +1,134 @@
+#!/bin/sh
+set -eu
+cd $(dirname $(realpath $_))
+
+image=filefrog/dproxy
+if [ -f .image ]; then
+	image=$(cat .image | head -n1)
+fi
+if [ -n "${DPROXY_IMAGE:-}" ]; then
+	image=$DPROXY_IMAGE
+fi
+
+proxy_defaults() {
+	docker run --rm $image \
+	  cat /opt/proxy.defaults
+}
+
+dump_docker() {
+	docker run --rm $image \
+	  cat /bin/dump-docker | /bin/sh
+}
+
+dump_nginx() {
+	docker exec -i dproxy nginx -T
+}
+
+reconfigure_nginx() {
+	docker exec -i dproxy reconfigure-nginx
+}
+
+reload_nginx() {
+	docker exec -i dproxy reload-nginx
+}
+
+CMD=${1:-help}
+case $CMD in
+	help)
+		cat >&2 <<EOF
+dproxy - A controller utility for dproxy HTTPS routing
+
+The following commands are understood:
+
+  list, ls - List routes known by the running dproxy.
+  check    - Examine running Docker containers looking for new routes.
+             Reconfigures and reloads if new routes are found.
+  dump     - Dump the database of known routes in CSV format.
+  watch    - Loop indefinitely, looking for new routes via \`check'
+			 every \$INTERVAL seconds (defaults to 30).
+
+  stop     - Shuts down the dproxy container.
+  start    - Starts up the dproxy container.
+  restart  - Shuts down the dproxy container and starts it back up.
+  reload   - Reload the nginx configuration
+
+  nginx    - Run nginx -T for lower-level debugging of route config.
+  update   - Pulls the latest dproxy Docker image and restarts.
+
+  help     - Print this screen and exit.
+
+EOF
+		exit 0
+		;;
+
+	update)
+		docker pull $image
+		$0 restart
+		;;
+
+	restart)
+		$0 stop && \
+		$0 start
+		;;
+
+	stop)
+		docker stop dproxy
+		docker rm dproxy
+		;;
+
+	start)
+		if [[ ! -f $PWD/dproxy.cert.pem || ! -f $PWD/dproxy.key.pem ]]; then
+			echo >&2 "dproxy.{cert,key}.pem not found in $PWD!"
+			exit 1
+		fi
+		if [[ ! -f $PWD/proxy.defaults ]]; then
+			proxy_defaults >$PWD/proxy.defaults
+		fi
+
+		docker stop dproxy 2>/dev/null || true
+		docker rm dproxy   2>/dev/null || true
+
+		docker run -d \
+		  --restart=always \
+		  --name dproxy \
+		  --network host \
+		  -v $PWD/proxy.defaults:/etc/nginx/proxy.defaults:ro \
+		  -v $PWD/dproxy.cert.pem:/etc/nginx/tls/wildcard.crt:ro \
+		  -v  $PWD/dproxy.key.pem:/etc/nginx/tls/wildcard.key:ro \
+		  $image
+		sleep 1
+		dump_docker | reconfigure_nginx
+		;;
+
+	list|ls)
+		docker exec dproxy cat /var/run/dproxy/last.control
+		;;
+
+	check)
+		dump_docker | reconfigure_nginx
+		;;
+
+	dump)
+		dump_docker
+		;;
+
+	nginx)
+		dump_nginx
+		;;
+
+	reload)
+		reload_nginx
+		;;
+
+	watch)
+		while true; do
+		  sleep ${INTERVAL:-30}
+		  dump_docker | reconfigure_nginx
+		done
+		;;
+
+	*)
+		echo >&2 "USAGE: $0 (start|stop|check|watch)"
+		exit 1
+		;;
+esac
