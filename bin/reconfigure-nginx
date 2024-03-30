@@ -16,6 +16,13 @@ open my $nginx_conf, ">", "$NGINX_CONFD/routes.conf.new"
 open my $control, ">", "$STATE_DIR/control"
 	or die "unable to open $STATE_DIR/control for writing: $!\n";
 
+print $nginx_conf <<EOF;
+map \$http_upgrade \$connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+EOF
 while (<STDIN>) {
 	chomp;
 	my ($id, $route, $endpoint) = map { dequote($_) } split /,/;
