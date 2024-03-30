@@ -21,7 +21,8 @@ do
            | sub(".{58}$";"")
            + env.DPROXY_TLD))
 }'
-done | jq -rs '.[] | [.id, .route, .endpoint] | @csv'
+done | jq -rs '.[] | [.id, .route, .endpoint] | @csv' \
+     | sed -e 's/0\.0\.0\.0/127.0.0.1/'
 
 manual_label=com.huntprod.docker
 for id in $(docker ps --filter label=${manual_label}.route --format '{{.ID}}')
@@ -33,4 +34,5 @@ do
   host: (.Config.Labels["'"${manual_label}.host"'"] // "127.0.0.1"),
   port:  .Config.Labels["'"${manual_label}.port"'"]
 }'
-done | jq -rs '.[] | [.id, .route, .host+":"+.port] | @csv'
+done | jq -rs '.[] | [.id, .route, .host+":"+.port] | @csv' \
+     | sed -e 's/0\.0\.0\.0/127.0.0.1/'
