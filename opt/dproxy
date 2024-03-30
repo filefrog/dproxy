@@ -128,7 +128,11 @@ EOF
 		;;
 
 	*)
-		echo >&2 "USAGE: $0 (start|stop|check|watch)"
+		if [ -d libexec -a -x libexec/dproxy-$CMD ]; then
+			exec libexec/dproxy-$CMD "$@"
+			exit 7
+		fi
+		echo >&2 "USAGE: $0 (start|stop|check|dump|watch|restart|reload|update|nginx)"
 		exit 1
 		;;
 esac
