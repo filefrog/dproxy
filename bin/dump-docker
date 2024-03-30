@@ -36,3 +36,21 @@ do
 }'
 done | jq -rs '.[] | [.id, .route, .host+":"+.port] | @csv' \
      | sed -e 's/0\.0\.0\.0/127.0.0.1/'
+
+default_label=com.huntprod.docker.default
+for id in $(docker ps --filter label=${default_label} --format '{{.ID}}' | head -n1)
+do
+    docker inspect $id | \
+      jq -r '.[] | {
+ id: .Id,
+ endpoint: (.NetworkSettings.Ports
+            | values[][0]
+            | select(.HostIp and .HostPort)
+            | .HostIp
+            + ":"
+            + .HostPort),
+
+ route: "_"
+}'
+done | jq -rs '.[] | [.id, .route, .endpoint] | @csv' \
+     | sed -e 's/0\.0\.0\.0/127.0.0.1/'

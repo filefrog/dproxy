@@ -40,10 +40,11 @@ while (<STDIN>) {
 	for (my $i = 0; $i < @routes; $i++) {
 		$route = $routes[$i];
 		$endpoint = $endpoints[$i];
+		my $default = $route eq '_' ? 'default_server deferred' : '';
 		print $control "$route -> $endpoint\n";
 		print $nginx_conf <<EOF;
 server {
-  listen 443 ssl;
+  listen 443 ssl $default;
   server_name $route;
 
   ssl_certificate     $TLS_CERT;
