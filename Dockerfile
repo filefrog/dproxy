@@ -1,2 +1,4 @@
 FROM nginx AS builder
-COPY . /
+COPY bin /bin
+COPY etc /etc
+COPY opt /opt
