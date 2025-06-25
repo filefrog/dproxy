@@ -1,56 +1,48 @@
 #!/bin/sh
 set -eu
-auto_label=${DPROXY_AUTO_LABEL:-com.huntprod.docker.auto}
-for id in $(docker ps --filter label=${auto_label} --format '{{.ID}}')
+prefix=${DPROXY_PREFIX:-com.huntprod.docker}
+
+#auto_label=${DPROXY_AUTO_LABEL:-com.huntprod.docker.auto}
+#for id in $(docker ps --filter label=${auto_label} --format '{{.ID}}')
+#do
+#	docker inspect $id | \
+#	  jq -r '.[] | {
+# id: .Id,
+# endpoint: (.NetworkSettings.Ports
+#            | values[][0]
+#            | select(.HostIp and .HostPort)
+#            | .HostIp
+#            + ":"
+#            + .HostPort),
+#
+# route: ((.Name
+#          | sub("/";"")
+#          | sub("_";"-"))
+#         +"-"
+#         +(.Id
+#           | sub(".{58}$";"")
+#           + env.DPROXY_TLD))
+#}'
+#done | jq -rs '.[] | [.id, .route, .endpoint] | @csv' \
+#     | sed -e 's/0\.0\.0\.0/127.0.0.1/'
+
+for id in $(docker ps --filter label=${prefix}.route --format '{{.ID}}')
 do
 	docker inspect $id | \
-	  jq -r '.[] | {
- id: .Id,
- endpoint: (.NetworkSettings.Ports
-            | values[][0]
-            | select(.HostIp and .HostPort)
-            | .HostIp
-            + ":"
-            + .HostPort),
-
- route: ((.Name
-          | sub("/";"")
-          | sub("_";"-"))
-         +"-"
-         +(.Id
-           | sub(".{58}$";"")
-           + env.DPROXY_TLD))
-}'
-done | jq -rs '.[] | [.id, .route, .endpoint] | @csv' \
-     | sed -e 's/0\.0\.0\.0/127.0.0.1/'
-
-manual_label=com.huntprod.docker
-for id in $(docker ps --filter label=${manual_label}.route --format '{{.ID}}')
-do
-	docker inspect $id | \
-	  jq -r '.[] | {
-  id:    .Id,
-  route: .Config.Labels["'"${manual_label}.route"'"],
-  host: (.Config.Labels["'"${manual_label}.host"'"] // "127.0.0.1"),
-  port:  .Config.Labels["'"${manual_label}.port"'"]
-}'
-done | jq -rs '.[] | [.id, .route, .host+":"+.port] | @csv' \
-     | sed -e 's/0\.0\.0\.0/127.0.0.1/'
-
-default_label=com.huntprod.docker.default
-for id in $(docker ps --filter label=${default_label} --format '{{.ID}}' | head -n1)
-do
-    docker inspect $id | \
-      jq -r '.[] | {
- id: .Id,
- endpoint: (.NetworkSettings.Ports
-            | values[][0]
-            | select(.HostIp and .HostPort)
-            | .HostIp
-            + ":"
-            + .HostPort),
-
- route: "_"
-}'
-done | jq -rs '.[] | [.id, .route, .endpoint] | @csv' \
-     | sed -e 's/0\.0\.0\.0/127.0.0.1/'
+	  jq -cr '
+.[]
+ | { id: .Id,
+     config: (
+       .Config.Labels
+       | [
+          to_entries
+          | .[]
+          | select(.key | contains("'$prefix'."))
+          | {key:   (.key | gsub("^'$prefix'.";"")),
+             value: .value}
+         ]
+       | from_entries
+     )
+   }
+'
+done | sort

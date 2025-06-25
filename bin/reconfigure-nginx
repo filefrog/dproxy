@@ -1,108 +1,90 @@
-#!/usr/bin/perl
-use strict;
-use warnings;
+#!/usr/bin/python3
+import json
+import os
+import os.path
+import sys
+import hashlib
 
-my $TLS_CERT = $ENV{'TLS_CERT'} || '/etc/nginx/tls/wildcard.crt';
-my $TLS_KEY  = $ENV{'TLS_KEY'}  || '/etc/nginx/tls/wildcard.key';
+def sha1_file(path):
+  if os.path.exists(path):
+    with open(path, 'rb') as f:
+      return hashlib.file_digest(f, 'sha1').hexdigest()
+  return ''
 
-my $NGINX_CONFD = $ENV{'NGINX_CONFD'} || '/etc/nginx/conf.d';
-my $STATE_DIR   = $ENV{'STATE_DIR'}   || '/var/run/dproxy';
+TLS_CERT = os.getenv('TLS_CERT', '/etc/nginx/tls/wildcard.crt')
+TLS_KEY  = os.getenv('TLS_KEY',  '/etc/nginx/tls/wildcard.key')
 
-`mkdir -p $NGINX_CONFD $STATE_DIR`;
+NGINX_CONFD = os.getenv('NGINX_CONFD', '/etc/nginx/conf.d')
+STATE_DIR   = os.getenv('STATE_DIR',   '/var/run/dproxy')
 
-open my $nginx_conf, ">", "$NGINX_CONFD/routes.conf.new"
-	or die "unable to open $NGINX_CONFD/routes.conf.new for writing: $!\n";
+os.makedirs(NGINX_CONFD, exist_ok=True)
+os.makedirs(STATE_DIR,   exist_ok=True)
 
-open my $control, ">", "$STATE_DIR/control"
-	or die "unable to open $STATE_DIR/control for writing: $!\n";
+new_routes_file  = os.path.join(NGINX_CONFD, 'routes.conf.new')
+cur_routes_file  = os.path.join(NGINX_CONFD, 'routes.conf')
+new_control_file = os.path.join(STATE_DIR, 'control')
+cur_control_file = os.path.join(STATE_DIR, 'last.control')
 
-print $nginx_conf <<EOF;
-map \$http_upgrade \$connection_upgrade {
+with open(new_routes_file, 'w') as routes:
+  with open(new_control_file, 'w') as control:
+    print('''
+map $http_upgrade $connection_upgrade {
   default upgrade;
   ''      close;
 }
+''', file=routes)
 
-EOF
-while (<STDIN>) {
-	chomp;
-	my ($id, $route, $endpoint) = map { dequote($_) } split /,/;
-	my @routes = ($route);
-	my @endpoints = ($endpoint);
-	if ($route =~ m/\+/) {
-		(my $prefix = $endpoint) =~ s/:.*//;
-		$endpoint =~ s/.*://;
-		@routes = split /\+/, $route;
-		@endpoints = map { "$prefix:$_" } split /\+/, $endpoint;
-	}
-	if (@routes != @endpoints) {
-		die "mismatched number of routes/ and ports (".scalar(@routes)." routes for ".scalar(@endpoints)." ports)\n";
-	}
-	for (my $i = 0; $i < @routes; $i++) {
-		$route = $routes[$i];
-		$endpoint = $endpoints[$i];
-		my $default = $route eq '_' ? 'default_server deferred' : '';
-		print $control "$route -> $endpoint\n";
-		print $nginx_conf <<EOF;
-server {
-  listen 443 ssl $default;
-  server_name $route;
+    for line in sys.stdin:
+      x = json.loads(line)
+      id = x['id']
+      config = x['config']
 
-  ssl_certificate     $TLS_CERT;
-  ssl_certificate_key $TLS_KEY;
+      headers = []
+      for k in config:
+        if k[:7] == 'header.':
+          headers.append(f'add_header {k[7:]} "{config[k]}";')
+      headers = "\n    ".join(headers)
+
+      config['endpoint'] = f"{config['host'] if 'host' in config else '127.0.0.1'}:{config['port']}"
+
+      print(f"{config['route']} -> {config['endpoint']}", file=control)
+      print(f'''
+server {{
+  listen 443 ssl {'default_server deferred' if config['route'] == '_' else ''};
+  server_name {config['route']};
+
+  ssl_certificate     {TLS_CERT};
+  ssl_certificate_key {TLS_KEY};
   include             /etc/nginx/tls.defaults;
 
-  location / {
-    proxy_pass http://$endpoint;
+  location / {{
+    proxy_pass http://{config['endpoint']};
     include    /etc/nginx/proxy.defaults;
-  }
-}
-EOF
-	}
-}
+    {headers}
+  }}
+}}
+''', file=routes)
 
-print $nginx_conf <<EOF;
-server {
+    print(f'''
+server {{
   listen 80;
   server_name _;
+  return 301 https://$host$request_uri;
+}}
+''', file=routes)
 
-  return 301 https://\$host\$request_uri;
-}
-EOF
+cur_sha1 = sha1_file(cur_routes_file)
+new_sha1 = sha1_file(new_routes_file)
+if cur_sha1 == new_sha1:
+  print(f'no changes detected ({cur_sha1})')
+  os.unlink(new_routes_file)
+  os.unlink(new_control_file)
 
-my $old_sha1 = '';
-my $new_sha1 = `/usr/bin/sha1sum <$STATE_DIR/control`;
-   $old_sha1 = `/usr/bin/sha1sum <$STATE_DIR/last.control` if -f "$STATE_DIR/last.control";
-
-if ($new_sha1 eq $old_sha1) {
-	print "no changes detected.\n";
-	unlink("$NGINX_CONFD/routes.conf.new");
-	unlink("$STATE_DIR/control");
-
-} else {
-	print "updating nginx...\n";
-	rename("$STATE_DIR/control",
-	       "$STATE_DIR/last.control");
-	rename("$NGINX_CONFD/routes.conf.new",
-	       "$NGINX_CONFD/routes.conf");
-	if ($ENV{SKIP_RELOAD} && $ENV{SKIP_RELOAD} eq 'yes') {
-		print "skipping reload of nginx (SKIP_RELOAD=yes)\n";
-	} else {
-		`reload-nginx`;
-	}
-}
-exit 0;
-
-sub slurp {
-	my ($filename) = @_;
-	open my $fh, "<", $filename
-		or return "";
-	my $s = do { local $/; <$fh> };
-	close $fh;
-	return $s;
-}
-
-sub dequote {
-	my ($s) = @_;
-	$s =~ s/(^"|"$)//g;
-	return $s;
-}
+else:
+  print(f'updating nginx (to {new_sha1})...')
+  os.rename(new_routes_file,  cur_routes_file)
+  os.rename(new_control_file, cur_control_file)
+  if os.getenv('SKIP_RELOAD', 'no') == 'yes':
+    print('skipping reload of nginx (SKIP_RELOAD=yes)')
+  else:
+    os.system('reload-nginx')
