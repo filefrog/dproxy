@@ -131,6 +131,7 @@ Set these before calling `./dproxy start`:
 | `DPROXY_HTTPS_PORT` | `443` | HTTPS listen port |
 | `DPROXY_NETWORK` | `host` | `host` or `bridge` |
 | `DPROXY_BACKEND_HOST` | `127.0.0.1` / `host.docker.internal` | Default upstream host |
+| `DPROXY_IPV6` | `on` | Add `[::]:PORT` listen directives for dual-stack; set to `off` if IPv6 is unavailable |
 | `DPROXY_CERT` | `./dproxy.cert` | Path to TLS certificate (manual mode) |
 | `DPROXY_KEY` | `./dproxy.key` | Path to TLS private key (manual mode) |
 | `DPROXY_ACME_DOMAIN` | _(unset)_ | Enable ACME; issues `*.DOMAIN` automatically |

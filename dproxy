@@ -14,6 +14,7 @@ name=${DPROXY_NAME:-dproxy}
 http_port=${DPROXY_HTTP_PORT:-80}
 https_port=${DPROXY_HTTPS_PORT:-443}
 network=${DPROXY_NETWORK:-host}
+ipv6=${DPROXY_IPV6:-on}
 
 if [ -n "${DPROXY_BACKEND_HOST:-}" ]; then
   backend_host=$DPROXY_BACKEND_HOST
@@ -74,6 +75,7 @@ Environment variables (set before calling start):
   DPROXY_NETWORK      - Network mode: host (default) or bridge
   DPROXY_BACKEND_HOST - Upstream host for routed containers
                         (default: 127.0.0.1 for host mode, host.docker.internal for bridge)
+  DPROXY_IPV6         - Enable IPv6 listen directives: on (default) or off
   DPROXY_CERT              - Path to TLS certificate (default: ./dproxy.cert)
   DPROXY_KEY               - Path to TLS private key (default: ./dproxy.key)
   DPROXY_ACME_DOMAIN       - Enable ACME; issues *.DOMAIN automatically
@@ -127,6 +129,7 @@ start)
     -e "HTTP_PORT=$http_port"
     -e "HTTPS_PORT=$https_port"
     -e "BACKEND_HOST=$backend_host"
+    -e "IPV6=$ipv6"
   )
 
   if [ "$network" = "host" ]; then

@@ -21,6 +21,14 @@ HTTPS_PORT    = os.getenv('HTTPS_PORT',    '443')
 BACKEND_HOST  = os.getenv('BACKEND_HOST',  '127.0.0.1')
 NGINX_CONFD   = os.getenv('NGINX_CONFD',   '/etc/nginx/conf.d')
 STATE_DIR     = os.getenv('STATE_DIR',     '/var/run/dproxy')
+IPV6          = os.getenv('IPV6',          'on').lower() not in ('off', 'false', '0')
+
+def v6(port, opts=''):
+    """Return an IPv6 listen line (with leading newline+indent) when IPv6 is enabled."""
+    if not IPV6:
+        return ''
+    s = f' {opts}' if opts else ''
+    return f'\n  listen [::]:{port}{s};'
 
 os.makedirs(NGINX_CONFD, exist_ok=True)
 os.makedirs(STATE_DIR,   exist_ok=True)
@@ -72,7 +80,7 @@ map $http_upgrade $connection_upgrade {
       print(f"https://{config['route']} -> {config['endpoint']} for [{id}]", file=control)
       print(f'''
 server {{
-  listen {HTTPS_PORT} ssl;
+  listen {HTTPS_PORT} ssl;{v6(HTTPS_PORT, 'ssl')}
   server_name {config['route']};
 
   ssl_certificate     {TLS_CERT};
@@ -90,13 +98,13 @@ server {{
     https_host = f'$host:{HTTPS_PORT}' if HTTPS_PORT != '443' else '$host'
     print(f'''
 server {{
-  listen {HTTP_PORT};
+  listen {HTTP_PORT};{v6(HTTP_PORT)}
   server_name _;
   return 301 https://{https_host}$request_uri;
 }}
 
 server {{
-  listen {HTTPS_PORT} ssl default_server deferred;
+  listen {HTTPS_PORT} ssl default_server deferred;{v6(HTTPS_PORT, 'ssl default_server deferred')}
   server_name _;
 
   ssl_certificate     {TLS_CERT};
