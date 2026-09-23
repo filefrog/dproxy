@@ -52,7 +52,8 @@ dproxy - A controller utility for dproxy HTTPS routing
 
 The following commands are understood:
 
-  list, ls - List routes known by the running dproxy.
+  status   - Show current status: routes, cert, config, event log.
+  list, ls - Alias for status.
   check    - Force an immediate reconfigure (routes update automatically).
   dump     - Dump the raw route JSON from running containers.
 
@@ -178,8 +179,8 @@ start)
   docker run "${docker_args[@]}" "$image"
   ;;
 
-list|ls)
-  docker exec $name cat /var/run/dproxy/last.control
+list|ls|status)
+  docker exec $name cat /var/run/dproxy/status
   ;;
 
 check)
@@ -203,7 +204,7 @@ reload)
     exec libexec/dproxy-$CMD "$@"
     exit 7
   fi
-  echo >&2 "USAGE: $0 (start|stop|check|dump|restart|reload|update|nginx)"
+  echo >&2 "USAGE: $0 (start|stop|status|check|dump|restart|reload|update|nginx)"
   exit 1
   ;;
 esac

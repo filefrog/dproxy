@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import datetime
 import json
 import os
 import subprocess
@@ -8,6 +9,11 @@ import time
 
 PREFIX   = os.getenv('DPROXY_PREFIX', 'com.huntprod.docker')
 DEBOUNCE = float(os.getenv('DPROXY_DEBOUNCE', '0.5'))
+
+DPROXY_DOMAIN = os.getenv('DPROXY_DOMAIN', '')
+HTTP_PORT     = os.getenv('HTTP_PORT',     '80')
+HTTPS_PORT    = os.getenv('HTTPS_PORT',    '443')
+BACKEND_HOST  = os.getenv('BACKEND_HOST',  '127.0.0.1')
 
 TLS_CERT = os.getenv('TLS_CERT', '/etc/nginx/tls/wildcard.crt')
 TLS_KEY  = os.getenv('TLS_KEY',  '/etc/nginx/tls/wildcard.key')
@@ -19,22 +25,138 @@ ACME_CA              = os.getenv('ACME_CA',        'letsencrypt')
 ACME_HOME            = os.getenv('ACME_HOME',      '/var/lib/acme')
 ACME_RENEW_INTERVAL  = int(os.getenv('ACME_RENEW_INTERVAL', str(12 * 3600)))
 
+STATE_DIR    = os.getenv('STATE_DIR', '/var/run/dproxy')
+STATUS_FILE  = os.path.join(STATE_DIR, 'status')
+EVENTS_FILE  = os.path.join(STATE_DIR, 'events')
+CONTROL_FILE = os.path.join(STATE_DIR, 'last.control')
+
 TRIGGER_EVENTS = {'start', 'stop', 'die', 'kill', 'pause', 'unpause'}
 
-_timer = None
-_lock  = threading.Lock()
+_timer      = None
+_lock       = threading.Lock()
+_start_time = datetime.datetime.now(datetime.timezone.utc)
 
 
 def log(msg):
     print(f'[dproxy] {msg}', flush=True)
 
 
+# --- status + event log ---
+
+def _now_str():
+    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+
+def log_event(msg):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(EVENTS_FILE, 'a') as f:
+        f.write(f'{_now_str()}  {msg}\n')
+
+
+def _cert_expiry():
+    if not os.path.exists(TLS_CERT):
+        return 'not found'
+    try:
+        r = subprocess.run(
+            ['openssl', 'x509', '-noout', '-enddate', '-in', TLS_CERT],
+            capture_output=True, text=True, timeout=5,
+        )
+        val = r.stdout.strip().split('=', 1)[1]   # notAfter=Sep 23 15:42:01 2026 GMT
+        dt  = datetime.datetime.strptime(val, '%b %d %H:%M:%S %Y %Z')
+        dt  = dt.replace(tzinfo=datetime.timezone.utc)
+        days = (dt - datetime.datetime.now(datetime.timezone.utc)).days
+        return f'{dt.strftime("%Y-%m-%d")} ({days} days)'
+    except Exception:
+        return 'unknown'
+
+
+def write_status():
+    os.makedirs(STATE_DIR, exist_ok=True)
+
+    now     = datetime.datetime.now(datetime.timezone.utc)
+    elapsed = now - _start_time
+    total_s = int(elapsed.total_seconds())
+    d, rem  = divmod(total_s, 86400)
+    h, rem  = divmod(rem, 3600)
+    m, s    = divmod(rem, 60)
+    if d:
+        uptime = f'{d}d {h}h {m}m'
+    elif h:
+        uptime = f'{h}h {m}m'
+    else:
+        uptime = f'{m}m {s}s'
+
+    routes = []
+    if os.path.exists(CONTROL_FILE):
+        with open(CONTROL_FILE) as f:
+            routes = [l.strip() for l in f if l.strip()]
+
+    if ACME_DOMAIN:
+        tls_mode = f'ACME  (*.{ACME_DOMAIN} via dns_{ACME_PROVIDER})'
+    else:
+        tls_mode = 'manual'
+
+    events = []
+    if os.path.exists(EVENTS_FILE):
+        with open(EVENTS_FILE) as f:
+            events = [l.rstrip() for l in f.readlines()[-20:]]
+
+    domain_val = DPROXY_DOMAIN or '(not set — route labels must be fully-qualified)'
+
+    out = [
+        'dproxy status',
+        '=' * 42,
+        f'Updated: {now.strftime("%Y-%m-%d %H:%M:%S UTC")}',
+        f'Uptime:  {uptime}',
+        '',
+        'Configuration',
+        f'  Domain:       {domain_val}',
+        f'  Prefix:       {PREFIX}',
+        f'  HTTP port:    {HTTP_PORT}',
+        f'  HTTPS port:   {HTTPS_PORT}',
+        f'  Backend host: {BACKEND_HOST}',
+        '',
+        'TLS Certificate',
+        f'  Mode:    {tls_mode}',
+        f'  Path:    {TLS_CERT}',
+        f'  Expires: {_cert_expiry()}',
+        '',
+        f'Active Routes ({len(routes)})',
+    ]
+    out += [f'  {r}' for r in routes] if routes else ['  (none)']
+    out += [
+        '',
+        f'Event Log (last {len(events)})',
+    ]
+    out += [f'  {e}' for e in events] if events else ['  (none)']
+    out.append('')
+
+    tmp = STATUS_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write('\n'.join(out))
+    os.rename(tmp, STATUS_FILE)
+
+
+# --- core ---
+
 def reconfigure():
+    before = os.path.getmtime(CONTROL_FILE) if os.path.exists(CONTROL_FILE) else None
+
     dump = subprocess.run(['dump-docker'], capture_output=True, text=True)
     if dump.returncode != 0:
         log(f'dump-docker error: {dump.stderr.strip()}')
         return
     subprocess.run(['reconfigure-nginx'], input=dump.stdout, text=True)
+
+    after = os.path.getmtime(CONTROL_FILE) if os.path.exists(CONTROL_FILE) else None
+    if before != after:
+        routes = []
+        if os.path.exists(CONTROL_FILE):
+            with open(CONTROL_FILE) as f:
+                routes = [l.strip() for l in f if l.strip()]
+        log_event(f'routes updated ({len(routes)} active)')
+
+    write_status()
 
 
 def schedule_reconfigure():
@@ -137,8 +259,14 @@ def ensure_cert():
         return True
     if acme_install():
         log('certificate restored from acme state')
+        log_event('certificate restored from acme state')
+        write_status()
         return True
-    return acme_issue()
+    ok = acme_issue()
+    if ok:
+        log_event('certificate obtained via ACME')
+        write_status()
+    return ok
 
 
 def run_renewal():
@@ -152,13 +280,17 @@ def run_renewal():
         )
         if result.returncode != 0:
             log(f'renewal failed: {result.stderr.strip()}')
+            log_event('certificate renewal failed')
         else:
             log('renewal check complete')
+            log_event('certificate renewal check completed')
+        write_status()
 
 
 # --- startup ---
 
 log('starting')
+log_event('started')
 
 if ACME_DOMAIN and ACME_PROVIDER:
     if not ensure_cert():

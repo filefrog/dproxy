@@ -182,11 +182,17 @@ dproxy commands
 ./dproxy start    - Start the container
 ./dproxy stop     - Stop and remove the container
 ./dproxy restart  - Stop then start
+./dproxy status   - Show routes, cert info, config, and event log
 ./dproxy check    - Force an immediate reconfigure
-./dproxy list     - Show currently active routes
 ./dproxy dump     - Raw route JSON from running containers
 ./dproxy reload   - Send nginx a reload signal
 ./dproxy nginx    - Run nginx -T (full config dump)
 ./dproxy update   - Pull latest image and restart
 ./dproxy help     - Full usage with all env vars
+```
+
+The status file is also readable directly:
+
+```sh
+docker exec dproxy cat /var/run/dproxy/status
 ```
