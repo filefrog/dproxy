@@ -1,64 +1,150 @@
-dproxy - A ~Dumb~ Docker Proxy
-==============================
+dproxy - Docker Proxy
+=====================
 
-This is dproxy, a ridiculously stupid nginx-based proxy for a
-single Docker host to use labels to set up front-end, TLS routes.
-It is designed to be used with Let's Encrypt using something like
-the DNS-01 challenge (to get a wildcard certificate).
+dproxy is an nginx-based reverse proxy for a single Docker host.
+Containers opt in by setting labels; dproxy picks them up automatically
+and reconfigures nginx within a second of each container start or stop.
+TLS is handled by a single wildcard certificate.
 
-It has two interesting parts:
+How it works
+------------
 
-`/bin/dump-docker` is meant to be run outside of the dproxy
-container, where it is safe to access the Docker socket (by
-running `docker` commands).  Its output gets piped into...
+A single container runs nginx and a Python supervisor. The supervisor
+mounts the Docker socket read-only and streams `docker events`. When a
+labeled container starts or stops it rewrites the nginx config and sends
+nginx a reload signal. nginx is babysit by the supervisor and restarted
+automatically if it exits.
 
-`/bin/reconfigure-nginx`, which is meant to be run from _inside_
-the dproxy container.  It reads the JSON produced by
-`dump-docker`, writes a new configuration for nginx, and then
-either reloads nginx to pick up the changes, or scraps it as a
-no-op.
+Route discovery is event-driven — no polling loop, no cron job, no
+external script.
 
-Reloading nginx is done via the `bin/reload-nginx` program, which
-just trawls through `/proc/*/cmdline` looking for the nginx:
-master process string.  It's dumb, but it works when nginx itself
-is containerized (and therefore /proc/$pid is fairly small).
+Installation
+------------
 
-It is safe to run this process from the Docker host on a fairly
-agressive schedule.  Doing so will exercise the Docker daemon
-itself, but the built-in safeguards of dproxy will prevent wild
-thrashing of the nginx process–unless you are wildly spinning up
-new (labeled) containers.
+Pull the image and extract the controller script:
 
-That brings us to the routing itself.  To get dproxy to start
-routing traffic to a container, add the following labels:
+```sh
+docker pull filefrog/dproxy
+docker run --rm filefrog/dproxy cat /usr/local/bin/dproxy > dproxy
+chmod +x dproxy
+```
 
-*com.huntprod.docker.route* - the Host: header you want to route
-to this container, and
+Then obtain a wildcard TLS certificate for your domain (Let's Encrypt
+DNS-01 challenge works well) and start dproxy:
 
-*com.huntprod.docker.port* - the port, forwarded on loopback, that
-will respond to the host-bound nginx process.
+```sh
+DPROXY_DOMAIN=example.com \
+  ./dproxy start
+```
 
-Here's a sketch of an operational deployment of dproxy:
+`dproxy start` looks for `dproxy.cert` and `dproxy.key` in the current
+directory by default (override with `DPROXY_CERT` / `DPROXY_KEY`).
+
+Routing
+-------
+
+To route traffic to a container, set two labels on it:
+
+| Label | Value |
+|-------|-------|
+| `com.huntprod.docker.route` | hostname to match (e.g. `myapp.example.com`) |
+| `com.huntprod.docker.port`  | host loopback port the container listens on |
+
+With `DPROXY_DOMAIN=example.com` set, short names expand automatically:
+
+```sh
+docker run \
+  --label com.huntprod.docker.route=myapp \
+  --label com.huntprod.docker.port=3000 \
+  -p 127.0.0.1:3000:3000 \
+  myimage
+```
+
+…routes `https://myapp.example.com` to `127.0.0.1:3000`.
+
+Additional labels:
+
+| Label | Effect |
+|-------|--------|
+| `com.huntprod.docker.host` | upstream host (default `127.0.0.1`) |
+| `com.huntprod.docker.header.X-Foo` | add response header `X-Foo` |
+
+Environment variables
+---------------------
+
+Set these before calling `./dproxy start`:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DPROXY_NAME` | `dproxy` | Container name; set to run multiple instances |
+| `DPROXY_HTTP_PORT` | `80` | HTTP listen port |
+| `DPROXY_HTTPS_PORT` | `443` | HTTPS listen port |
+| `DPROXY_NETWORK` | `host` | `host` or `bridge` |
+| `DPROXY_BACKEND_HOST` | `127.0.0.1` / `host.docker.internal` | Default upstream host |
+| `DPROXY_CERT` | `./dproxy.cert` | Path to TLS certificate |
+| `DPROXY_KEY` | `./dproxy.key` | Path to TLS private key |
+| `DPROXY_DOMAIN` | _(unset)_ | Root domain for short-name label expansion |
+| `DPROXY_PREFIX` | `com.huntprod.docker` | Docker label prefix |
+| `DPROXY_IMAGE` | `filefrog/dproxy` | Image to use |
+
+Running a test instance
+-----------------------
+
+To run a second dproxy alongside production — different port, different
+label prefix, different domain:
+
+```sh
+DPROXY_NAME=dproxy-test \
+DPROXY_HTTP_PORT=8080 \
+DPROXY_HTTPS_PORT=8443 \
+DPROXY_PREFIX=test.docker \
+DPROXY_DOMAIN=test.example.com \
+DPROXY_CERT=./test.cert \
+DPROXY_KEY=./test.key \
+  ./dproxy start
+```
+
+Containers opt in to the test instance with `test.docker.route` /
+`test.docker.port` labels and are completely invisible to the production
+proxy.
+
+The `./test` script in this repo does exactly this with a self-signed
+wildcard cert generated on first run.
+
+Network modes
+-------------
+
+**Host networking (default):** dproxy shares the host network stack.
+Backend containers expose ports with `-p 127.0.0.1:PORT:PORT`; nginx
+reaches them at `127.0.0.1:PORT`. Works on any Linux Docker host.
+
+**Bridge networking:** set `DPROXY_NETWORK=bridge`. dproxy gets `-p`
+mappings and `--add-host=host.docker.internal:host-gateway`. Backend
+containers must bind to `0.0.0.0` (not loopback) so that
+`host.docker.internal:PORT` is reachable. Useful on Docker Desktop.
+
+No-route page
+-------------
+
+Requests for unconfigured hostnames get a branded HTML page instead of
+a TLS error. To replace it with a custom page:
+
+```sh
+-v /path/to/custom.html:/etc/dproxy/404.html:ro
+```
+
+dproxy commands
+---------------
 
 ```
-#!/bin/sh
-set -eu
-
-docker run \
-  --restart=always \
-  --name dproxy \
-  --network host \
-  huntprod/dproxy &
-
-docker run --rm huntprod/dproxy \
-  cat /usr/bin/dump-docker \      # from inside the image
-    > /usr/bin/dump-docker        #    ... to the outside!
-chmod 0755 /usr/bin/dump-docker
-
-# assuming jq is already installed...
-
-while true; do
-  sleep 1
-  dump-docker | docker exec -i dproxy reconfigure-nginx
-done
+./dproxy start    - Start the container
+./dproxy stop     - Stop and remove the container
+./dproxy restart  - Stop then start
+./dproxy check    - Force an immediate reconfigure
+./dproxy list     - Show currently active routes
+./dproxy dump     - Raw route JSON from running containers
+./dproxy reload   - Send nginx a reload signal
+./dproxy nginx    - Run nginx -T (full config dump)
+./dproxy update   - Pull latest image and restart
+./dproxy help     - Full usage with all env vars
 ```

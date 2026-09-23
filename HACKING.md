@@ -1,23 +1,61 @@
 Hacking on dproxy
 =================
 
-These are my notes from the nights I implemented dproxy.
-Hopefully we will find them useful one day.
+Building the image
+------------------
 
-It's a bad idea to run this from outside of a container; the
-`reconfigure-nginx` script has a nasty habit of targeting the
-wrong nginx process if run on a busy Docker host.
+```sh
+make build
+```
 
-If you need a wildcard certificate, feel free to modify the
-`utils/selfsign` script to your liking.  It generates self-signed
-things, but that's fine for dev / testing of routing.
+The Makefile target builds the image and runs `nginx -v` inside it to
+confirm the binary is present.
 
-There is also a utility called `utils/auxiliary` that runs a stock
-nginx container, on 8033, and sets the appropriate labels for
-dproxy to route to it.  That is super useful for spinning up lots
-of test routes.
+Key scripts inside the image
+-----------------------------
 
-Finally, `utils/run` instantiates the dproxy container, mapping
-cert.pem and key.pem into the default locations for a wildcard TLS
-certificate.  Again, use `./utils/selfsign` to generate the key
-and its certificate to populate those.
+`/bin/dproxy-supervisor` — the main process (PID 1 equivalent). Starts
+nginx, watches `docker events`, and debounces reconfigure calls. Both
+nginx and the event watcher are restarted automatically on failure.
+
+`/bin/dump-docker` — queries the Docker socket for containers carrying
+the route label prefix and emits newline-delimited JSON.
+
+`/bin/reconfigure-nginx` — reads that JSON on stdin, writes
+`/etc/nginx/conf.d/routes.conf`, and sends nginx a reload signal if the
+file changed (SHA1 comparison, so it's safe to call in a tight loop).
+
+`/bin/reload-nginx` — scans `/proc/*/cmdline` for the nginx master
+process and sends it SIGHUP. Dumb but reliable inside a container.
+
+`/bin/entrypoint` — pre-flight checks (docker socket, TLS certs, port
+availability, DPROXY_DOMAIN hint), then `exec`s into the supervisor.
+
+Testing routing locally
+-----------------------
+
+`./test` spins up a second dproxy instance (`dproxy-test`) on ports
+8080/8443 with a self-signed wildcard cert for `*.test.example.com`,
+generated in `./tmp/` on first run.
+
+`./util/auxiliary` runs a stock nginx container with the right labels to
+create a test route pointing at it.
+
+`./util/selfsign` generates a self-signed wildcard cert (edit the domain
+first). Output is a key + cert on stdout.
+
+Certificates
+------------
+
+dproxy expects a single wildcard TLS certificate covering all routed
+hostnames. For production use Let's Encrypt with the DNS-01 challenge.
+For local testing, `./util/selfsign` or the auto-generation in `./test`.
+
+The cert and key paths inside the container are always:
+
+```
+/etc/nginx/tls/wildcard.crt
+/etc/nginx/tls/wildcard.key
+```
+
+Override the host-side source paths with `DPROXY_CERT` / `DPROXY_KEY`.
