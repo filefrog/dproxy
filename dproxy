@@ -63,6 +63,7 @@ The following commands are understood:
   restart  - Shuts down the dproxy container and starts it back up.
   reload   - Reload the nginx configuration.
 
+  logs [N] - Follow container logs (optional: last N lines).
   nginx    - Run nginx -T for lower-level debugging of route config.
   update   - Pulls the latest dproxy Docker image and restarts.
 
@@ -206,12 +207,16 @@ reload)
   reload_nginx
   ;;
 
+logs)
+  docker logs ${2:+--tail=${2}} --follow $name
+  ;;
+
 *)
   if [ -d libexec -a -x libexec/dproxy-$CMD ]; then
     exec libexec/dproxy-$CMD "$@"
     exit 7
   fi
-  echo >&2 "USAGE: $0 (start|stop|status|check|dump|restart|reload|update|nginx)"
+  echo >&2 "USAGE: $0 (start|stop|status|check|dump|restart|reload|logs|update|nginx)"
   exit 1
   ;;
 esac

@@ -255,6 +255,7 @@ dproxy commands
 ./dproxy check    - Force an immediate reconfigure
 ./dproxy dump     - Raw route JSON from running containers
 ./dproxy reload   - Send nginx a reload signal
+./dproxy logs [N] - Follow container logs (optional: last N lines)
 ./dproxy nginx    - Run nginx -T (full config dump)
 ./dproxy update   - Pull latest image and restart
 ./dproxy help     - Full usage with all env vars
