@@ -1,4 +1,6 @@
 *.pem
 /t
 /tmp
+/acme
 /proxy.defaults
+acme.env

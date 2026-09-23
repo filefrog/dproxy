@@ -69,6 +69,44 @@ Additional labels:
 | `com.huntprod.docker.host` | upstream host (default `127.0.0.1`) |
 | `com.huntprod.docker.header.X-Foo` | add response header `X-Foo` |
 
+Automatic certificates (ACME / Let's Encrypt)
+---------------------------------------------
+
+dproxy can obtain and renew a wildcard certificate automatically using
+[acme.sh](https://acme.sh) and a DNS-01 challenge. This requires no
+port 80 access and works behind firewalls.
+
+**Setup:**
+
+1. Create `acme.env` in the directory where you run `./dproxy start`
+   and put your DNS provider credentials in it:
+
+   ```sh
+   # Cloudflare example
+   CF_Token=your-api-token
+   CF_Account_ID=your-account-id
+   ```
+
+   `acme.env` is gitignored. See the
+   [acme.sh DNS API docs](https://github.com/acmesh-official/acme.sh/wiki/dnsapi)
+   for the full list of providers and their required variables.
+
+2. Start with ACME enabled:
+
+   ```sh
+   DPROXY_ACME_DOMAIN=example.com \
+   DPROXY_ACME_PROVIDER=cf \
+   DPROXY_ACME_EMAIL=you@example.com \
+     ./dproxy start
+   ```
+
+   On first run the supervisor obtains `*.example.com` from Let's Encrypt
+   before starting nginx. Certificate state is stored in `./acme/`
+   (gitignored, persists across container restarts). Renewal runs every
+   12 hours; nginx is reloaded automatically when a cert is renewed.
+
+   `DPROXY_CERT` / `DPROXY_KEY` are not needed in ACME mode.
+
 Environment variables
 ---------------------
 
@@ -81,8 +119,12 @@ Set these before calling `./dproxy start`:
 | `DPROXY_HTTPS_PORT` | `443` | HTTPS listen port |
 | `DPROXY_NETWORK` | `host` | `host` or `bridge` |
 | `DPROXY_BACKEND_HOST` | `127.0.0.1` / `host.docker.internal` | Default upstream host |
-| `DPROXY_CERT` | `./dproxy.cert` | Path to TLS certificate |
-| `DPROXY_KEY` | `./dproxy.key` | Path to TLS private key |
+| `DPROXY_CERT` | `./dproxy.cert` | Path to TLS certificate (manual mode) |
+| `DPROXY_KEY` | `./dproxy.key` | Path to TLS private key (manual mode) |
+| `DPROXY_ACME_DOMAIN` | _(unset)_ | Enable ACME; issues `*.DOMAIN` automatically |
+| `DPROXY_ACME_PROVIDER` | _(unset)_ | DNS provider slug (e.g. `cf`, `aws`, `dgon`) |
+| `DPROXY_ACME_EMAIL` | _(unset)_ | Account email for expiry notifications |
+| `DPROXY_ACME_CA` | `letsencrypt` | ACME certificate authority |
 | `DPROXY_DOMAIN` | _(unset)_ | Root domain for short-name label expansion |
 | `DPROXY_PREFIX` | `com.huntprod.docker` | Docker label prefix |
 | `DPROXY_IMAGE` | `filefrog/dproxy` | Image to use |

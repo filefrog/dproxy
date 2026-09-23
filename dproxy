@@ -73,11 +73,17 @@ Environment variables (set before calling start):
   DPROXY_NETWORK      - Network mode: host (default) or bridge
   DPROXY_BACKEND_HOST - Upstream host for routed containers
                         (default: 127.0.0.1 for host mode, host.docker.internal for bridge)
-  DPROXY_CERT         - Path to TLS certificate (default: ./dproxy.cert)
-  DPROXY_KEY          - Path to TLS private key (default: ./dproxy.key)
-  DPROXY_DOMAIN       - Root domain; short route labels expand to name.DOMAIN
-  DPROXY_PREFIX       - Docker label prefix (default: com.huntprod.docker)
-  DPROXY_IMAGE        - Override the Docker image to use
+  DPROXY_CERT              - Path to TLS certificate (default: ./dproxy.cert)
+  DPROXY_KEY               - Path to TLS private key (default: ./dproxy.key)
+  DPROXY_ACME_DOMAIN       - Enable ACME; issues *.DOMAIN automatically
+  DPROXY_ACME_PROVIDER     - acme.sh DNS provider slug (e.g. cf, aws, dgon)
+  DPROXY_ACME_EMAIL        - Account email for Let's Encrypt notifications
+  DPROXY_ACME_CA           - ACME CA (default: letsencrypt)
+  DPROXY_DOMAIN            - Root domain; short route labels expand to name.DOMAIN
+  DPROXY_PREFIX            - Docker label prefix (default: com.huntprod.docker)
+  DPROXY_IMAGE             - Override the Docker image to use
+
+ACME provider credentials go in acme.env (gitignored), e.g. CF_Token=xxx
 
 EOF
   exit 0
@@ -99,21 +105,6 @@ stop)
   ;;
 
 start)
-  if   [ -n "${DPROXY_CERT:-}" ] && [ -z "${DPROXY_KEY:-}" ]; then
-    echo >&2 "DPROXY_CERT is set but DPROXY_KEY is not — this looks like a typo"
-    exit 1
-  elif [ -z "${DPROXY_CERT:-}" ] && [ -n "${DPROXY_KEY:-}" ]; then
-    echo >&2 "DPROXY_KEY is set but DPROXY_CERT is not — this looks like a typo"
-    exit 1
-  fi
-  cert=${DPROXY_CERT:-$PWD/dproxy.cert}
-  key=${DPROXY_KEY:-$PWD/dproxy.key}
-
-  if [[ ! -f $cert || ! -f $key ]]; then
-    echo >&2 "TLS cert/key not found: $cert / $key"
-    echo >&2 "Set DPROXY_CERT and DPROXY_KEY, or place files at the default paths."
-    exit 1
-  fi
   if [[ ! -f $PWD/proxy.defaults ]]; then
     proxy_defaults >$PWD/proxy.defaults
   fi
@@ -121,27 +112,70 @@ start)
   docker stop $name 2>/dev/null || true
   docker rm   $name 2>/dev/null || true
 
+  docker_args=(
+    -d
+    --restart=always
+    --name "$name"
+    -l "com.huntprod.docker.local.pwd=$PWD"
+    -v /var/run/docker.sock:/var/run/docker.sock:ro
+    -v "$PWD/proxy.defaults:/etc/nginx/proxy.defaults:ro"
+    -e "HTTP_PORT=$http_port"
+    -e "HTTPS_PORT=$https_port"
+    -e "BACKEND_HOST=$backend_host"
+  )
+
   if [ "$network" = "host" ]; then
-    net_args="--network host"
+    docker_args+=( --network host )
   else
-    net_args="-p ${http_port}:${http_port} -p ${https_port}:${https_port} --add-host=host.docker.internal:host-gateway"
+    docker_args+=(
+      -p "${http_port}:${http_port}"
+      -p "${https_port}:${https_port}"
+      --add-host=host.docker.internal:host-gateway
+    )
   fi
 
-  docker run -d \
-    --restart=always \
-    --name $name \
-    $net_args \
-    -l com.huntprod.docker.local.pwd="$PWD" \
-    -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    -v $PWD/proxy.defaults:/etc/nginx/proxy.defaults:ro \
-    -v $cert:/etc/nginx/tls/wildcard.crt:ro \
-    -v  $key:/etc/nginx/tls/wildcard.key:ro \
-    -e HTTP_PORT=$http_port \
-    -e HTTPS_PORT=$https_port \
-    -e BACKEND_HOST=$backend_host \
-    ${DPROXY_DOMAIN:+-e DPROXY_DOMAIN=$DPROXY_DOMAIN} \
-    ${DPROXY_PREFIX:+-e DPROXY_PREFIX=$DPROXY_PREFIX} \
-    $image
+  if [ -n "${DPROXY_ACME_DOMAIN:-}" ]; then
+    if [ -z "${DPROXY_ACME_PROVIDER:-}" ]; then
+      echo >&2 "DPROXY_ACME_PROVIDER is required when DPROXY_ACME_DOMAIN is set"
+      exit 1
+    fi
+    mkdir -p "$PWD/acme/live"
+    docker_args+=(
+      -v "$PWD/acme:/var/lib/acme"
+      -e "ACME_DOMAIN=$DPROXY_ACME_DOMAIN"
+      -e "ACME_PROVIDER=$DPROXY_ACME_PROVIDER"
+      -e "TLS_CERT=/var/lib/acme/live/wildcard.crt"
+      -e "TLS_KEY=/var/lib/acme/live/wildcard.key"
+    )
+    [ -n "${DPROXY_ACME_EMAIL:-}" ] && docker_args+=( -e "ACME_EMAIL=$DPROXY_ACME_EMAIL" )
+    [ -n "${DPROXY_ACME_CA:-}"    ] && docker_args+=( -e "ACME_CA=$DPROXY_ACME_CA" )
+    [ -f "$PWD/acme.env"          ] && docker_args+=( --env-file "$PWD/acme.env" )
+  else
+    if   [ -n "${DPROXY_CERT:-}" ] && [ -z "${DPROXY_KEY:-}" ]; then
+      echo >&2 "DPROXY_CERT is set but DPROXY_KEY is not — this looks like a typo"
+      exit 1
+    elif [ -z "${DPROXY_CERT:-}" ] && [ -n "${DPROXY_KEY:-}" ]; then
+      echo >&2 "DPROXY_KEY is set but DPROXY_CERT is not — this looks like a typo"
+      exit 1
+    fi
+    cert=${DPROXY_CERT:-$PWD/dproxy.cert}
+    key=${DPROXY_KEY:-$PWD/dproxy.key}
+    if [[ ! -f $cert || ! -f $key ]]; then
+      echo >&2 "TLS cert/key not found: $cert / $key"
+      echo >&2 "Set DPROXY_CERT and DPROXY_KEY, or place files at the default paths."
+      echo >&2 "Or use DPROXY_ACME_DOMAIN + DPROXY_ACME_PROVIDER for automatic certificates."
+      exit 1
+    fi
+    docker_args+=(
+      -v "$cert:/etc/nginx/tls/wildcard.crt:ro"
+      -v "$key:/etc/nginx/tls/wildcard.key:ro"
+    )
+  fi
+
+  [ -n "${DPROXY_DOMAIN:-}" ] && docker_args+=( -e "DPROXY_DOMAIN=$DPROXY_DOMAIN" )
+  [ -n "${DPROXY_PREFIX:-}" ] && docker_args+=( -e "DPROXY_PREFIX=$DPROXY_PREFIX" )
+
+  docker run "${docker_args[@]}" "$image"
   ;;
 
 list|ls)

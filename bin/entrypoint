@@ -17,14 +17,26 @@ if [ ! -S /var/run/docker.sock ]; then
 	exit 1
 fi
 
-# TLS cert + key — nginx will fail once a TLS route is configured without these
-if [ ! -f "$TLS_CERT" ]; then
-	warn "TLS certificate not found at $TLS_CERT"
-	hint "Mount with: -v /path/to/cert.pem:$TLS_CERT:ro"
-fi
-if [ ! -f "$TLS_KEY" ]; then
-	warn "TLS private key not found at $TLS_KEY"
-	hint "Mount with: -v /path/to/key.pem:$TLS_KEY:ro"
+# TLS cert + key
+if [ -n "${ACME_DOMAIN:-}" ]; then
+	if [ -z "${ACME_PROVIDER:-}" ]; then
+		warn "ACME_DOMAIN is set but ACME_PROVIDER is not"
+		hint "Set ACME_PROVIDER to your DNS provider slug (e.g. cf, aws, dgon)"
+		hint "See https://github.com/acmesh-official/acme.sh/wiki/dnsapi for the full list"
+		exit 1
+	fi
+	# Cert absence is expected on first run; supervisor handles issuance
+	log "ACME enabled for *.$ACME_DOMAIN via dns_$ACME_PROVIDER"
+else
+	if [ ! -f "$TLS_CERT" ]; then
+		warn "TLS certificate not found at $TLS_CERT"
+		hint "Mount with: -v /path/to/cert.pem:$TLS_CERT:ro"
+		hint "Or set ACME_DOMAIN + ACME_PROVIDER for automatic certificate management"
+	fi
+	if [ ! -f "$TLS_KEY" ]; then
+		warn "TLS private key not found at $TLS_KEY"
+		hint "Mount with: -v /path/to/key.pem:$TLS_KEY:ro"
+	fi
 fi
 
 # Port availability — warn if another process has already claimed our ports

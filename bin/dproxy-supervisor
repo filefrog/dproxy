@@ -2,11 +2,22 @@
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 
 PREFIX   = os.getenv('DPROXY_PREFIX', 'com.huntprod.docker')
 DEBOUNCE = float(os.getenv('DPROXY_DEBOUNCE', '0.5'))
+
+TLS_CERT = os.getenv('TLS_CERT', '/etc/nginx/tls/wildcard.crt')
+TLS_KEY  = os.getenv('TLS_KEY',  '/etc/nginx/tls/wildcard.key')
+
+ACME_DOMAIN          = os.getenv('ACME_DOMAIN',    '')
+ACME_PROVIDER        = os.getenv('ACME_PROVIDER',  '')
+ACME_EMAIL           = os.getenv('ACME_EMAIL',     '')
+ACME_CA              = os.getenv('ACME_CA',        'letsencrypt')
+ACME_HOME            = os.getenv('ACME_HOME',      '/var/lib/acme')
+ACME_RENEW_INTERVAL  = int(os.getenv('ACME_RENEW_INTERVAL', str(12 * 3600)))
 
 TRIGGER_EVENTS = {'start', 'stop', 'die', 'kill', 'pause', 'unpause'}
 
@@ -36,11 +47,12 @@ def schedule_reconfigure():
 
 
 def run_nginx():
-    log('starting nginx')
-    proc = subprocess.Popen(['nginx', '-g', 'daemon off;'])
-    proc.wait()
-    log(f'nginx exited (code {proc.returncode}), propagating')
-    os.exit(proc.returncode)
+    while True:
+        log('starting nginx')
+        proc = subprocess.Popen(['nginx', '-g', 'daemon off;'])
+        proc.wait()
+        log(f'nginx exited (code {proc.returncode}), restarting in 1s')
+        time.sleep(1)
 
 
 def watch_events():
@@ -75,7 +87,84 @@ def watch_events():
         time.sleep(5)
 
 
+# --- ACME ---
+
+def acme_install():
+    """Copy cert from acme.sh state into the paths nginx expects."""
+    os.makedirs(os.path.dirname(TLS_CERT), exist_ok=True)
+    result = subprocess.run([
+        'acme.sh', '--install-cert',
+        '-d', f'*.{ACME_DOMAIN}',
+        '--home', ACME_HOME,
+        '--cert-file',      TLS_CERT,
+        '--key-file',       TLS_KEY,
+        '--fullchain-file', TLS_CERT,
+        '--reloadcmd',      'reload-nginx',
+    ], capture_output=True, text=True)
+    return result.returncode == 0 and os.path.exists(TLS_CERT)
+
+
+def acme_issue():
+    """Run the full DNS-01 challenge and issue a wildcard cert."""
+    log(f'obtaining wildcard certificate for *.{ACME_DOMAIN} (provider: {ACME_PROVIDER})')
+    cmd = [
+        'acme.sh', '--issue',
+        '--dns', f'dns_{ACME_PROVIDER}',
+        '-d', f'*.{ACME_DOMAIN}',
+        '-d', ACME_DOMAIN,
+        '--home', ACME_HOME,
+        '--server', ACME_CA,
+    ]
+    if ACME_EMAIL:
+        cmd += ['--accountemail', ACME_EMAIL]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        log('certificate issuance failed')
+        return False
+    if not acme_install():
+        log('certificate installation failed')
+        return False
+    log('certificate obtained and installed')
+    return True
+
+
+def ensure_cert():
+    """
+    Fast path: restore from acme.sh state after a container restart.
+    Slow path: full DNS-01 issuance on first run.
+    """
+    if os.path.exists(TLS_CERT) and os.path.exists(TLS_KEY):
+        return True
+    if acme_install():
+        log('certificate restored from acme state')
+        return True
+    return acme_issue()
+
+
+def run_renewal():
+    """Periodically renew certs. acme.sh handles install and nginx reload via --reloadcmd."""
+    while True:
+        time.sleep(ACME_RENEW_INTERVAL)
+        log('running certificate renewal check')
+        result = subprocess.run(
+            ['acme.sh', '--renew-all', '--home', ACME_HOME],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            log(f'renewal failed: {result.stderr.strip()}')
+        else:
+            log('renewal check complete')
+
+
+# --- startup ---
+
 log('starting')
+
+if ACME_DOMAIN and ACME_PROVIDER:
+    if not ensure_cert():
+        log('could not obtain TLS certificate — exiting')
+        sys.exit(1)
+    threading.Thread(target=run_renewal, daemon=True).start()
 
 threading.Thread(target=run_nginx, daemon=True).start()
 reconfigure()
