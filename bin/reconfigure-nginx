@@ -44,11 +44,24 @@ map $http_upgrade $connection_upgrade {
       id = x['id']
       config = x['config']
 
-      headers = []
+      extras = []
+
       for k in config:
         if k[:7] == 'header.':
-          headers.append(f'add_header {k[7:]} "{config[k]}";')
-      headers = "\n    ".join(headers)
+          extras.append(f'add_header {k[7:]} "{config[k]}";')
+
+      timeout = config.get('timeout', '').strip()
+      if timeout:
+        try:
+          t = int(timeout)
+          if t <= 0:
+            raise ValueError()
+          extras.append(f'proxy_read_timeout {t}s;')
+          extras.append(f'proxy_send_timeout {t}s;')
+        except ValueError:
+          print(f'warning: ignoring invalid timeout {timeout!r} for route {config.get("route", "?")}')
+
+      extras_block = "\n    ".join(extras)
 
       route = config.get('route', '')
       if DPROXY_DOMAIN and '.' not in route:
@@ -69,7 +82,7 @@ server {{
   location / {{
     proxy_pass http://{config['endpoint']};
     include    /etc/nginx/proxy.defaults;
-    {headers}
+    {extras_block}
   }}
 }}
 ''', file=routes)

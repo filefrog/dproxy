@@ -67,7 +67,19 @@ Additional labels:
 | Label | Effect |
 |-------|--------|
 | `com.huntprod.docker.host` | upstream host (default `127.0.0.1`) |
+| `com.huntprod.docker.timeout` | `proxy_read_timeout` and `proxy_send_timeout` in seconds |
 | `com.huntprod.docker.header.X-Foo` | add response header `X-Foo` |
+
+Use `timeout` for routes that do slow work — AI inference, report generation, long-polling:
+
+```sh
+docker run \
+  --label com.huntprod.docker.route=myapp \
+  --label com.huntprod.docker.port=8000 \
+  --label com.huntprod.docker.timeout=300 \
+  -p 127.0.0.1:8000:8000 \
+  myimage
+```
 
 Automatic certificates (ACME / Let's Encrypt)
 ---------------------------------------------
