@@ -146,7 +146,10 @@ def reconfigure():
     if dump.returncode != 0:
         log(f'dump-docker error: {dump.stderr.strip()}')
         return
-    subprocess.run(['reconfigure-nginx'], input=dump.stdout, text=True)
+    reconf = subprocess.run(['reconfigure-nginx'], input=dump.stdout, text=True)
+    if reconf.returncode != 0:
+        log_event('config validation failed — nginx config not reloaded')
+        write_status()
 
     after = os.path.getmtime(CONTROL_FILE) if os.path.exists(CONTROL_FILE) else None
     if before != after:

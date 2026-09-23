@@ -2,6 +2,7 @@
 import json
 import os
 import os.path
+import subprocess
 import sys
 import hashlib
 
@@ -105,10 +106,34 @@ if cur_sha1 == new_sha1:
   os.unlink(new_control_file)
 
 else:
-  print(f'updating nginx (to {new_sha1})...')
-  os.rename(new_routes_file,  cur_routes_file)
+  print(f'validating new config ({new_sha1})...')
+
+  # Swap new config into the live path so nginx -t reads it.
+  # Keep a backup of the current config to restore on failure.
+  bak_routes_file = cur_routes_file + '.bak'
+  if os.path.exists(cur_routes_file):
+    os.rename(cur_routes_file, bak_routes_file)
+  os.rename(new_routes_file, cur_routes_file)
+
+  result = subprocess.run(['nginx', '-t'], capture_output=True, text=True)
+
+  if result.returncode != 0:
+    print('config validation failed — discarding new config, keeping previous')
+    for line in result.stderr.strip().splitlines():
+      print(f'  {line}')
+    os.unlink(cur_routes_file)
+    if os.path.exists(bak_routes_file):
+      os.rename(bak_routes_file, cur_routes_file)
+    os.unlink(new_control_file)
+    sys.exit(1)
+
+  # Validation passed — commit control file and reload.
+  if os.path.exists(bak_routes_file):
+    os.unlink(bak_routes_file)
   os.rename(new_control_file, cur_control_file)
+
   if os.getenv('SKIP_RELOAD', 'no') == 'yes':
     print('skipping reload of nginx (SKIP_RELOAD=yes)')
   else:
+    print('reloading nginx')
     os.system('reload-nginx')
