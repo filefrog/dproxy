@@ -1,9 +1,23 @@
+# dproxy proxy.defaults
+# ---------------------
+# This file is included inside every proxied location {} block.
+#
+# On first `./dproxy start`, dproxy extracts this file from the image into
+# ./proxy.defaults in your working directory and bind-mounts that copy into the
+# running container.  Edit ./proxy.defaults to tune behaviour for all proxied
+# backends.  A new image release will never overwrite your local copy; only a
+# deliberate `rm ./proxy.defaults && ./dproxy restart` will restore the
+# factory defaults.
+
+# Keep the upstream connection alive and handle WebSocket upgrades
 proxy_http_version  1.1;
 proxy_cache_bypass  $http_upgrade;
 proxy_redirect      http:// https://;
 
 proxy_set_header Upgrade           $http_upgrade;
 proxy_set_header Connection        $connection_upgrade;
+
+# Tell upstreams who the real client is
 proxy_set_header Host              $host;
 proxy_set_header X-Real-IP         $remote_addr;
 proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -11,4 +25,35 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-Host  $host;
 proxy_set_header X-Forwarded-Port  $server_port;
 
+# Raise this if your apps accept large file uploads or API payloads
 client_max_body_size 1000M;
+
+
+# ── Common customizations ────────────────────────────────────────────────────
+# Uncomment and adjust in your local ./proxy.defaults copy.
+
+# Upstream timeouts.  Defaults are 60 s each.  Raise proxy_read_timeout for
+# apps with long-running requests (report generation, AI inference, etc.).
+#proxy_connect_timeout  10s;
+#proxy_send_timeout     60s;
+#proxy_read_timeout    120s;
+
+# Disable response buffering.  Required for server-sent events (SSE), live
+# logs, and other streaming responses where the client must receive chunks as
+# they arrive rather than after nginx has buffered the full response.
+#proxy_buffering         off;
+#proxy_request_buffering off;
+
+# Security headers added to every proxied response.
+#add_header X-Frame-Options         DENY                             always;
+#add_header X-Content-Type-Options  nosniff                          always;
+#add_header Referrer-Policy         strict-origin-when-cross-origin  always;
+
+# Real-IP passthrough.  If dproxy itself sits behind another proxy (CDN, load
+# balancer), trust its source IP so that $remote_addr — and therefore the
+# X-Real-IP / X-Forwarded-For headers above — reflect the actual client.
+#set_real_ip_from   10.0.0.0/8;
+#set_real_ip_from   172.16.0.0/12;
+#set_real_ip_from   192.168.0.0/16;
+#real_ip_header     X-Forwarded-For;
+#real_ip_recursive  on;

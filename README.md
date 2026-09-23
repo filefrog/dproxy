@@ -175,6 +175,62 @@ a TLS error. To replace it with a custom page:
 -v /path/to/custom.html:/etc/dproxy/404.html:ro
 ```
 
+Customizing proxy behavior
+--------------------------
+
+On first `./dproxy start`, dproxy extracts its built-in nginx proxy
+directives to `./proxy.defaults` in your working directory and
+bind-mounts that file into every container run. Edit this local copy to
+change behavior across all proxied backends. Future image updates will
+**not** overwrite it.
+
+To reset to factory defaults:
+
+```sh
+rm ./proxy.defaults && ./dproxy restart
+```
+
+The file is standard nginx configuration included inside each
+`location /` block. Common things to add:
+
+**Longer timeouts** for apps with slow responses (AI inference, report
+generation, large exports):
+
+```nginx
+proxy_read_timeout  300s;
+proxy_send_timeout  300s;
+```
+
+**Disable buffering** for streaming responses — server-sent events
+(SSE), live log tails, chunked transfer:
+
+```nginx
+proxy_buffering         off;
+proxy_request_buffering off;
+```
+
+**Security headers** applied to every proxied response:
+
+```nginx
+add_header X-Frame-Options         DENY                             always;
+add_header X-Content-Type-Options  nosniff                          always;
+add_header Referrer-Policy         strict-origin-when-cross-origin  always;
+```
+
+**Real-IP passthrough** when dproxy sits behind a CDN or load balancer,
+so upstream apps see the actual client address rather than the
+intermediate proxy's IP:
+
+```nginx
+set_real_ip_from  10.0.0.0/8;
+real_ip_header    X-Forwarded-For;
+real_ip_recursive on;
+```
+
+The `./proxy.defaults` file ships with these options commented out.
+`./dproxy nginx` dumps the full resolved nginx configuration if you want
+to verify a change took effect.
+
 dproxy commands
 ---------------
 

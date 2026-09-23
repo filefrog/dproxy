@@ -106,6 +106,10 @@ stop)
   ;;
 
 start)
+  # Extract proxy.defaults from the image on first run so the operator has a
+  # local copy to edit.  Subsequent starts reuse the existing file, preserving
+  # any customizations.  To reset to factory defaults:
+  #   rm ./proxy.defaults && ./dproxy restart
   if [[ ! -f $PWD/proxy.defaults ]]; then
     proxy_defaults >$PWD/proxy.defaults
   fi
