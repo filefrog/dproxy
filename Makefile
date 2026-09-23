@@ -1,5 +1,5 @@
 IMAGE ?= filefrog/dproxy
-TAG ?= 2
+TAG ?= 3
 
 build:
 	docker build -t $(IMAGE):$(TAG) .
