@@ -1,2 +1,3 @@
+http2         on;
 ssl_protocols TLSv1.3;
 ssl_ciphers   HIGH:!aNULL:!MD5;
