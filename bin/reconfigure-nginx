@@ -47,7 +47,7 @@ map $http_upgrade $connection_upgrade {
 
       config['endpoint'] = f"{config['host'] if 'host' in config else '127.0.0.1'}:{config['port']}"
 
-      print(f"{config['route']} -> {config['endpoint']}", file=control)
+      print(f"https://{config['route']} -> {config['endpoint']} for [{id}]", file=control)
       print(f'''
 server {{
   listen 443 ssl {'default_server deferred' if config['route'] == '_' else ''};
