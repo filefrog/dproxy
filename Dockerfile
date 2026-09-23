@@ -8,6 +8,7 @@ RUN apt-get update \
     -o /usr/local/bin/acme.sh \
  && chmod +x /usr/local/bin/acme.sh \
  && apt-get clean
+ENV DPROXY_VERSION=3
 COPY bin /bin
 COPY etc /etc
 COPY opt /opt
