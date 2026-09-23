@@ -8,4 +8,5 @@ RUN apt-get update \
 COPY bin /bin
 COPY etc /etc
 COPY opt /opt
+COPY dproxy /usr/local/bin/dproxy
 ENTRYPOINT ["/bin/entrypoint"]
