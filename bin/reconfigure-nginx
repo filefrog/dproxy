@@ -14,8 +14,12 @@ def sha1_file(path):
 TLS_CERT = os.getenv('TLS_CERT', '/etc/nginx/tls/wildcard.crt')
 TLS_KEY  = os.getenv('TLS_KEY',  '/etc/nginx/tls/wildcard.key')
 
-NGINX_CONFD = os.getenv('NGINX_CONFD', '/etc/nginx/conf.d')
-STATE_DIR   = os.getenv('STATE_DIR',   '/var/run/dproxy')
+DPROXY_DOMAIN = os.getenv('DPROXY_DOMAIN', '')
+HTTP_PORT     = os.getenv('HTTP_PORT',     '80')
+HTTPS_PORT    = os.getenv('HTTPS_PORT',    '443')
+BACKEND_HOST  = os.getenv('BACKEND_HOST',  '127.0.0.1')
+NGINX_CONFD   = os.getenv('NGINX_CONFD',   '/etc/nginx/conf.d')
+STATE_DIR     = os.getenv('STATE_DIR',     '/var/run/dproxy')
 
 os.makedirs(NGINX_CONFD, exist_ok=True)
 os.makedirs(STATE_DIR,   exist_ok=True)
@@ -45,12 +49,16 @@ map $http_upgrade $connection_upgrade {
           headers.append(f'add_header {k[7:]} "{config[k]}";')
       headers = "\n    ".join(headers)
 
-      config['endpoint'] = f"{config['host'] if 'host' in config else '127.0.0.1'}:{config['port']}"
+      route = config.get('route', '')
+      if DPROXY_DOMAIN and '.' not in route:
+        config['route'] = f'{route}.{DPROXY_DOMAIN}'
+
+      config['endpoint'] = f"{config['host'] if 'host' in config else BACKEND_HOST}:{config['port']}"
 
       print(f"https://{config['route']} -> {config['endpoint']} for [{id}]", file=control)
       print(f'''
 server {{
-  listen 443 ssl {'default_server deferred' if config['route'] == '_' else ''};
+  listen {HTTPS_PORT} ssl {'default_server deferred' if config['route'] == '_' else ''};
   server_name {config['route']};
 
   ssl_certificate     {TLS_CERT};
@@ -65,11 +73,12 @@ server {{
 }}
 ''', file=routes)
 
+    https_host = f'$host:{HTTPS_PORT}' if HTTPS_PORT != '443' else '$host'
     print(f'''
 server {{
-  listen 80;
+  listen {HTTP_PORT};
   server_name _;
-  return 301 https://$host$request_uri;
+  return 301 https://{https_host}$request_uri;
 }}
 ''', file=routes)
 

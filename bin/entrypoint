@@ -1,0 +1,51 @@
+#!/bin/sh
+
+log()  { printf '[dproxy] %s\n'          "$*";     }
+warn() { printf '[dproxy] WARNING: %s\n' "$*" >&2; }
+hint() { printf '[dproxy]          %s\n' "$*" >&2; }
+
+PREFIX=${DPROXY_PREFIX:-com.huntprod.docker}
+TLS_CERT=${TLS_CERT:-/etc/nginx/tls/wildcard.crt}
+TLS_KEY=${TLS_KEY:-/etc/nginx/tls/wildcard.key}
+HTTP_PORT=${HTTP_PORT:-80}
+HTTPS_PORT=${HTTPS_PORT:-443}
+
+# Docker socket — event watching and route discovery won't work without it
+if [ ! -S /var/run/docker.sock ]; then
+	warn "Docker socket not found at /var/run/docker.sock"
+	hint "Add to your docker run: -v /var/run/docker.sock:/var/run/docker.sock:ro"
+	exit 1
+fi
+
+# TLS cert + key — nginx will fail once a TLS route is configured without these
+if [ ! -f "$TLS_CERT" ]; then
+	warn "TLS certificate not found at $TLS_CERT"
+	hint "Mount with: -v /path/to/cert.pem:$TLS_CERT:ro"
+fi
+if [ ! -f "$TLS_KEY" ]; then
+	warn "TLS private key not found at $TLS_KEY"
+	hint "Mount with: -v /path/to/key.pem:$TLS_KEY:ro"
+fi
+
+# Port availability — warn if another process has already claimed our ports
+check_port() {
+	local hex
+	hex=$(printf '%04X' "$1")
+	grep -q ":${hex} " /proc/net/tcp6 2>/dev/null ||
+	grep -q ":${hex} " /proc/net/tcp  2>/dev/null
+}
+if check_port "$HTTP_PORT"; then
+	warn "Port $HTTP_PORT (\$HTTP_PORT) is already in use — nginx may fail to bind"
+fi
+if check_port "$HTTPS_PORT"; then
+	warn "Port $HTTPS_PORT (\$HTTPS_PORT) is already in use — nginx may fail to bind"
+fi
+
+# DPROXY_DOMAIN — without it, route labels must be fully-qualified hostnames
+if [ -z "${DPROXY_DOMAIN:-}" ]; then
+	log "DPROXY_DOMAIN not set — route labels must be fully-qualified hostnames"
+	hint "e.g. ${PREFIX}.route=myapp.example.com"
+	hint "Or set -e DPROXY_DOMAIN=example.com to use short names like '${PREFIX}.route=myapp'"
+fi
+
+exec python3 /bin/dproxy-supervisor

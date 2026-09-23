@@ -1,0 +1,88 @@
+#!/usr/bin/python3
+import json
+import os
+import subprocess
+import threading
+import time
+
+PREFIX   = os.getenv('DPROXY_PREFIX', 'com.huntprod.docker')
+DEBOUNCE = float(os.getenv('DPROXY_DEBOUNCE', '0.5'))
+
+TRIGGER_EVENTS = {'start', 'stop', 'die', 'kill', 'pause', 'unpause'}
+
+_timer = None
+_lock  = threading.Lock()
+
+
+def log(msg):
+    print(f'[dproxy] {msg}', flush=True)
+
+
+def reconfigure():
+    dump = subprocess.run(['dump-docker'], capture_output=True, text=True)
+    if dump.returncode != 0:
+        log(f'dump-docker error: {dump.stderr.strip()}')
+        return
+    subprocess.run(['reconfigure-nginx'], input=dump.stdout, text=True)
+
+
+def schedule_reconfigure():
+    global _timer
+    with _lock:
+        if _timer is not None:
+            _timer.cancel()
+        _timer = threading.Timer(DEBOUNCE, reconfigure)
+        _timer.start()
+
+
+def run_nginx():
+    log('starting nginx')
+    proc = subprocess.Popen(['nginx', '-g', 'daemon off;'])
+    proc.wait()
+    log(f'nginx exited (code {proc.returncode}), propagating')
+    os.exit(proc.returncode)
+
+
+def watch_events():
+    while True:
+        try:
+            proc = subprocess.Popen(
+                ['docker', 'events', '--format', '{{json .}}'],
+                stdout=subprocess.PIPE, text=True,
+            )
+            log('watching docker events')
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get('Type') != 'container':
+                    continue
+                if event.get('Action') not in TRIGGER_EVENTS:
+                    continue
+                attrs = event.get('Actor', {}).get('Attributes', {})
+                if f'{PREFIX}.route' in attrs:
+                    cid = event.get('Actor', {}).get('ID', '')[:12]
+                    log(f'container {cid} {event["Action"]} — scheduling reconfigure')
+                    schedule_reconfigure()
+            proc.wait()
+        except Exception as e:
+            log(f'event watcher error: {e}')
+        log('reconnecting to docker events in 5s')
+        time.sleep(5)
+
+
+log('starting')
+
+threading.Thread(target=run_nginx, daemon=True).start()
+reconfigure()
+threading.Thread(target=watch_events, daemon=True).start()
+
+try:
+    while True:
+        time.sleep(3600)
+except KeyboardInterrupt:
+    pass

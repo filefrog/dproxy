@@ -1,14 +1,26 @@
 #!/bin/bash
-cd $(dirname $(realpath $0))
-pwd
 set -eu
+cd $(dirname $(realpath $0))
 
-image=filefrog/dproxy:2
+image=filefrog/dproxy:3
 if [ -f .image ]; then
   image=$(cat .image | head -n1)
 fi
 if [ -n "${DPROXY_IMAGE:-}" ]; then
   image=$DPROXY_IMAGE
+fi
+
+name=${DPROXY_NAME:-dproxy}
+http_port=${DPROXY_HTTP_PORT:-80}
+https_port=${DPROXY_HTTPS_PORT:-443}
+network=${DPROXY_NETWORK:-host}
+
+if [ -n "${DPROXY_BACKEND_HOST:-}" ]; then
+  backend_host=$DPROXY_BACKEND_HOST
+elif [ "$network" = "bridge" ]; then
+  backend_host=host.docker.internal
+else
+  backend_host=127.0.0.1
 fi
 
 proxy_defaults() {
@@ -17,20 +29,19 @@ proxy_defaults() {
 }
 
 dump_docker() {
-  docker run --rm $image \
-    cat /bin/dump-docker | /bin/sh
+  docker exec $name dump-docker
 }
 
 dump_nginx() {
-  docker exec -i dproxy nginx -T
+  docker exec -i $name nginx -T
 }
 
 reconfigure_nginx() {
-  docker exec -i dproxy reconfigure-nginx
+  docker exec -i $name reconfigure-nginx
 }
 
 reload_nginx() {
-  docker exec -i dproxy reload-nginx
+  docker exec -i $name reload-nginx
 }
 
 CMD=${1:-help}
@@ -42,21 +53,31 @@ dproxy - A controller utility for dproxy HTTPS routing
 The following commands are understood:
 
   list, ls - List routes known by the running dproxy.
-  check    - Examine running Docker containers looking for new routes.
-             Reconfigures and reloads if new routes are found.
-  dump     - Dump the database of known routes in CSV format.
-  watch    - Loop indefinitely, looking for new routes via \`check'
-             every \$INTERVAL seconds (defaults to 30).
+  check    - Force an immediate reconfigure (routes update automatically).
+  dump     - Dump the raw route JSON from running containers.
 
   stop     - Shuts down the dproxy container.
   start    - Starts up the dproxy container.
   restart  - Shuts down the dproxy container and starts it back up.
-  reload   - Reload the nginx configuration
+  reload   - Reload the nginx configuration.
 
   nginx    - Run nginx -T for lower-level debugging of route config.
   update   - Pulls the latest dproxy Docker image and restarts.
 
   help     - Print this screen and exit.
+
+Environment variables (set before calling start):
+  DPROXY_NAME         - Container name (default: dproxy); set to run multiple instances
+  DPROXY_HTTP_PORT    - HTTP listen port (default: 80)
+  DPROXY_HTTPS_PORT   - HTTPS listen port (default: 443)
+  DPROXY_NETWORK      - Network mode: host (default) or bridge
+  DPROXY_BACKEND_HOST - Upstream host for routed containers
+                        (default: 127.0.0.1 for host mode, host.docker.internal for bridge)
+  DPROXY_CERT         - Path to TLS certificate (default: ./dproxy.cert)
+  DPROXY_KEY          - Path to TLS private key (default: ./dproxy.key)
+  DPROXY_DOMAIN       - Root domain; short route labels expand to name.DOMAIN
+  DPROXY_PREFIX       - Docker label prefix (default: com.huntprod.docker)
+  DPROXY_IMAGE        - Override the Docker image to use
 
 EOF
   exit 0
@@ -73,41 +94,62 @@ restart)
   ;;
 
 stop)
-  docker stop dproxy
-  docker rm dproxy
+  docker stop $name
+  docker rm $name
   ;;
 
 start)
-  if [[ ! -f $PWD/dproxy.cert.pem || ! -f $PWD/dproxy.key.pem ]]; then
-    echo >&2 "dproxy.{cert,key}.pem not found in $PWD!"
+  if   [ -n "${DPROXY_CERT:-}" ] && [ -z "${DPROXY_KEY:-}" ]; then
+    echo >&2 "DPROXY_CERT is set but DPROXY_KEY is not — this looks like a typo"
+    exit 1
+  elif [ -z "${DPROXY_CERT:-}" ] && [ -n "${DPROXY_KEY:-}" ]; then
+    echo >&2 "DPROXY_KEY is set but DPROXY_CERT is not — this looks like a typo"
+    exit 1
+  fi
+  cert=${DPROXY_CERT:-$PWD/dproxy.cert}
+  key=${DPROXY_KEY:-$PWD/dproxy.key}
+
+  if [[ ! -f $cert || ! -f $key ]]; then
+    echo >&2 "TLS cert/key not found: $cert / $key"
+    echo >&2 "Set DPROXY_CERT and DPROXY_KEY, or place files at the default paths."
     exit 1
   fi
   if [[ ! -f $PWD/proxy.defaults ]]; then
     proxy_defaults >$PWD/proxy.defaults
   fi
 
-  docker stop dproxy 2>/dev/null || true
-  docker rm   dproxy 2>/dev/null || true
+  docker stop $name 2>/dev/null || true
+  docker rm   $name 2>/dev/null || true
+
+  if [ "$network" = "host" ]; then
+    net_args="--network host"
+  else
+    net_args="-p ${http_port}:${http_port} -p ${https_port}:${https_port} --add-host=host.docker.internal:host-gateway"
+  fi
 
   docker run -d \
     --restart=always \
-    --name dproxy \
-    --network host \
+    --name $name \
+    $net_args \
     -l com.huntprod.docker.local.pwd="$PWD" \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
     -v $PWD/proxy.defaults:/etc/nginx/proxy.defaults:ro \
-    -v $PWD/dproxy.cert.pem:/etc/nginx/tls/wildcard.crt:ro \
-    -v  $PWD/dproxy.key.pem:/etc/nginx/tls/wildcard.key:ro \
+    -v $cert:/etc/nginx/tls/wildcard.crt:ro \
+    -v  $key:/etc/nginx/tls/wildcard.key:ro \
+    -e HTTP_PORT=$http_port \
+    -e HTTPS_PORT=$https_port \
+    -e BACKEND_HOST=$backend_host \
+    ${DPROXY_DOMAIN:+-e DPROXY_DOMAIN=$DPROXY_DOMAIN} \
+    ${DPROXY_PREFIX:+-e DPROXY_PREFIX=$DPROXY_PREFIX} \
     $image
-  sleep 1
-  dump_docker | reconfigure_nginx
   ;;
 
 list|ls)
-  docker exec dproxy cat /var/run/dproxy/last.control | sort
+  docker exec $name cat /var/run/dproxy/last.control
   ;;
 
 check)
-  dump_docker | reconfigure_nginx
+  docker exec $name sh -c 'dump-docker | reconfigure-nginx'
   ;;
 
 dump)
@@ -122,19 +164,12 @@ reload)
   reload_nginx
   ;;
 
-watch)
-  while true; do
-    sleep ${INTERVAL:-30}
-    dump_docker | reconfigure_nginx
-  done
-  ;;
-
 *)
   if [ -d libexec -a -x libexec/dproxy-$CMD ]; then
     exec libexec/dproxy-$CMD "$@"
     exit 7
   fi
-  echo >&2 "USAGE: $0 (start|stop|check|dump|watch|restart|reload|update|nginx)"
+  echo >&2 "USAGE: $0 (start|stop|check|dump|restart|reload|update|nginx)"
   exit 1
   ;;
 esac

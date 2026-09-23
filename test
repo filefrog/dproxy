@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+export DPROXY_NAME=dproxy-test
+export DPROXY_HTTP_PORT=8180
+export DPROXY_HTTPS_PORT=8443
+export DPROXY_DOMAIN=test.example.com
+export DPROXY_PREFIX=test.docker
+
+export DPROXY_CERT=./tmp/test.cert.pem
+export DPROXY_KEY=./tmp/test.key.pem
+
+if [ ! -f "$DPROXY_CERT" ] || [ ! -f "$DPROXY_KEY" ]; then
+  mkdir -p ./tmp
+  echo "Generating self-signed wildcard certificate for *.$DPROXY_DOMAIN..."
+  openssl req \
+    -newkey rsa:2048 -nodes -sha256 \
+    -keyout "$DPROXY_KEY" \
+    -subj "/CN=*.$DPROXY_DOMAIN" \
+    -addext "subjectAltName=DNS:*.$DPROXY_DOMAIN,DNS:$DPROXY_DOMAIN" \
+    -x509 -days 3650 \
+    -out "$DPROXY_CERT" 2>/dev/null
+fi
+
+./dproxy start

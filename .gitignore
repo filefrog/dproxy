@@ -1,2 +1,4 @@
 *.pem
 /t
+/tmp
+/proxy.defaults
