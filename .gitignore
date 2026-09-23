@@ -4,3 +4,7 @@
 /acme
 /proxy.defaults
 acme.env
+
+# Claude
+/rebuild
+/.claude.contained
