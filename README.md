@@ -119,6 +119,156 @@ port 80 access and works behind firewalls.
 
    `DPROXY_CERT` / `DPROXY_KEY` are not needed in ACME mode.
 
+### DNS provider reference
+
+For each provider: create `acme.env` with the listed variables, then
+pass the slug as `DPROXY_ACME_PROVIDER`.
+
+---
+
+**Cloudflare** — `DPROXY_ACME_PROVIDER=cf`
+
+Create an API token with *Zone → DNS → Edit* permission scoped to your
+zone. Account ID is visible on the Cloudflare dashboard sidebar.
+
+```sh
+CF_Token=your-api-token
+CF_Account_ID=your-account-id
+```
+
+---
+
+**AWS Route 53** — `DPROXY_ACME_PROVIDER=aws`
+
+The IAM user or role needs `route53:ListHostedZones`,
+`route53:GetChange`, and `route53:ChangeResourceRecordSets`.
+
+```sh
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+If dproxy runs on an EC2 instance or ECS task with an instance/task
+role that already has those permissions, leave both variables out of
+`acme.env` — the AWS SDK will pick up the role automatically.
+
+---
+
+**DigitalOcean** — `DPROXY_ACME_PROVIDER=dgon`
+
+Generate a personal access token with *Write* scope at
+**API → Tokens**.
+
+```sh
+DO_API_KEY=your-personal-access-token
+```
+
+---
+
+**Linode / Akamai Cloud** — `DPROXY_ACME_PROVIDER=linode_v4`
+
+Generate a personal access token with **Read/Write** access on the
+*Domain* resource. The older `linode` slug (v3 API) is retired.
+
+```sh
+LINODE_V4_API_KEY=your-personal-access-token
+```
+
+---
+
+**Vultr** — `DPROXY_ACME_PROVIDER=vultr`
+
+Generate an API key at **Account → API**.
+
+```sh
+VULTR_API_KEY=your-api-key
+```
+
+---
+
+**Porkbun** — `DPROXY_ACME_PROVIDER=porkbun`
+
+Enable API access for the domain in the Porkbun dashboard, then
+generate an API key pair under **Account → API Keys**.
+
+```sh
+PORKBUN_API_KEY=pk1_...
+PORKBUN_SECRET_API_KEY=sk1_...
+```
+
+---
+
+**Namecheap** — `DPROXY_ACME_PROVIDER=namecheap`
+
+Enable API access in **Profile → Tools → Namecheap API Access** and
+whitelist your server's public IP. `NAMECHEAP_SOURCEIP` must match the
+whitelisted IP.
+
+```sh
+NAMECHEAP_API_KEY=your-api-key
+NAMECHEAP_API_USERNAME=your-username
+NAMECHEAP_SOURCEIP=1.2.3.4
+```
+
+---
+
+**GoDaddy** — `DPROXY_ACME_PROVIDER=gd`
+
+Generate a production API key at **developer.godaddy.com**.
+
+```sh
+GD_Key=your-api-key
+GD_Secret=your-api-secret
+```
+
+---
+
+**Gandi** — `DPROXY_ACME_PROVIDER=gandi_livedns`
+
+Generate a personal access token at **Account → Security**.
+
+```sh
+GANDI_LIVEDNS_TOKEN=your-personal-access-token
+```
+
+---
+
+**Azure DNS** — `DPROXY_ACME_PROVIDER=azure`
+
+Create a service principal with the *DNS Zone Contributor* role on
+your DNS zone, then gather the four values below from the app
+registration.
+
+```sh
+AZUREDNS_SUBSCRIPTIONID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZUREDNS_TENANTID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZUREDNS_APPID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZUREDNS_CLIENTSECRET=your-client-secret
+```
+
+---
+
+**Google Cloud DNS** — `DPROXY_ACME_PROVIDER=gcloud`
+
+Create a service account with the *DNS Administrator* role, download
+a JSON key, and base64-encode it. Alternatively, if dproxy runs on a
+GCE instance with the *Cloud DNS Admin* scope, no key file is needed.
+
+```sh
+CLOUDSDK_ACTIVE_CONFIG_NAME=your-gcloud-config   # or use the JSON key path approach
+```
+
+See [acme.sh Google Cloud DNS docs](https://github.com/acmesh-official/acme.sh/wiki/dnsapi#dns_gcloud)
+for the full key-file setup.
+
+---
+
+For providers not listed here, consult the
+[acme.sh DNS API wiki](https://github.com/acmesh-official/acme.sh/wiki/dnsapi).
+The pattern is always the same: find your provider's slug and required
+variables, put the variables in `acme.env`, and pass the slug as
+`DPROXY_ACME_PROVIDER`.
+
 Environment variables
 ---------------------
 
